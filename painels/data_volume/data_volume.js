@@ -584,7 +584,148 @@ retryButton.addEventListener('click', fetchData);
 
 // Main function to initialize the application
 function init() {
+  // Add refresh button event listener
+  const refreshButton = document.getElementById('refresh-button');
+  if (refreshButton) {
+    refreshButton.addEventListener('click', async () => {
+      refreshButton.disabled = true;
+      refreshButton.textContent = '🔄 Atualizando...';
+      
+      try {
+        await fetchData();
+      } finally {
+        refreshButton.disabled = false;
+        refreshButton.textContent = '🔄 Atualizar Dados';
+      }
+    });
+  }
+  
   fetchData();
+}
+
+// Validate if API data contains expected fields
+function isValidAPIData(data) {
+  if (!data || typeof data !== 'object') {
+    return false;
+  }
+  
+  // Check if at least some expected fields are present
+  const expectedFields = ['version', 'agents_count', 'spaces_count', 'events_count', 'projects_count', 'opportunities_count'];
+  const hasValidFields = expectedFields.some(field => data.hasOwnProperty(field) && data[field] !== undefined);
+  
+  return hasValidFields;
+}
+
+// Fetch dynamic data from each API endpoint
+async function fetchSiteInfo(url, timeout = 10000) {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeout);
+  
+  try {
+    const response = await fetch(url, {
+      signal: controller.signal,
+      mode: 'cors',
+      headers: {
+        'Accept': 'application/json',
+        'Content-Type': 'application/json'
+      }
+    });
+    
+    clearTimeout(timeoutId);
+    
+    if (!response.ok) {
+      throw new Error(`HTTP error! status: ${response.status}`);
+    }
+    
+    const data = await response.json();
+    
+    // Validate API data before returning
+    if (!isValidAPIData(data)) {
+      throw new Error('Invalid API response - missing expected fields');
+    }
+    
+    return data;
+  } catch (error) {
+    clearTimeout(timeoutId);
+    console.warn(`Failed to fetch data from ${url}:`, error.message);
+    return null;
+  }
+}
+
+// Update loading status in UI
+function updateLoadingStatus(message) {
+  const loadingText = document.querySelector('.loading-container .loading-text');
+  if (loadingText) {
+    loadingText.textContent = message;
+  }
+}
+
+// Update mock data with dynamic data from APIs
+async function updateDataWithAPIs() {
+  const updatedData = [];
+  let successCount = 0;
+  let failureCount = 0;
+  
+  updateLoadingStatus('Iniciando carregamento dos dados das APIs...');
+  
+  for (let i = 0; i < mockData.length; i++) {
+    const item = { ...mockData[i] };
+    const itemName = item.name || `API ${i + 1}`;
+    
+    if (item.url) {
+      updateLoadingStatus(`Carregando dados de ${itemName}... (${i + 1}/${mockData.length})`);
+      console.log(`Fetching data from: ${item.url}`);
+      
+      const apiData = await fetchSiteInfo(item.url);
+      
+      if (apiData) {
+        // Update dynamic fields with API data
+        if (apiData.version !== undefined) item.version = apiData.version;
+        if (apiData.timezone !== undefined) item.timezone = apiData.timezone;
+        if (apiData.agents_count !== undefined) item.agents_count = apiData.agents_count;
+        if (apiData.spaces_count !== undefined) item.spaces_count = apiData.spaces_count;
+        if (apiData.events_count !== undefined) item.events_count = apiData.events_count;
+        if (apiData.projects_count !== undefined) item.projects_count = apiData.projects_count;
+        if (apiData.opportunities_count !== undefined) item.opportunities_count = apiData.opportunities_count;
+        if (apiData.description !== undefined) item.description = apiData.description;
+        
+        // Mark as updated with timestamp
+        item.lastUpdated = new Date().toISOString();
+        item.dataSource = 'api';
+        
+        successCount++;
+        console.log(`✓ Updated data for ${itemName}`);
+      } else {
+        // API failed - use data from initial array (mockData) as fallback
+        const originalItem = mockData[i];
+        item.version = originalItem.version;
+        item.timezone = originalItem.timezone;
+        item.agents_count = originalItem.agents_count;
+        item.spaces_count = originalItem.spaces_count;
+        item.events_count = originalItem.events_count;
+        item.projects_count = originalItem.projects_count;
+        item.opportunities_count = originalItem.opportunities_count;
+        item.description = originalItem.description;
+        
+        // Mark as using fallback data from initial array
+        item.dataSource = 'fallback';
+        item.fallbackReason = 'API indisponível - usando dados do array inicial';
+        
+        failureCount++;
+        console.log(`✗ API failed for ${itemName} - using fallback data from initial array`);
+      }
+    } else {
+      // No URL available, use static data
+      item.dataSource = 'static';
+    }
+    
+    updatedData.push(item);
+  }
+  
+  updateLoadingStatus(`Finalizando... ${successCount} atualizados, ${failureCount} usando fallback`);
+  console.log(`Data update summary: ${successCount} successful API calls, ${failureCount} using fallback data, ${mockData.length - successCount - failureCount} static entries`);
+  
+  return updatedData;
 }
 
 // Fetch data from API or use mock data
@@ -593,11 +734,10 @@ async function fetchData() {
   hideError();
   
   try {
-    // In a real application, you would fetch data from an API
-    // const response = await fetch('https://api.example.com/data');
-    // const data = await response.json();
-    
-    // Using mock data for demonstration
+    // Fetch dynamic data from APIs
+    console.log('Starting to fetch dynamic data from APIs...');
+    const data = await updateDataWithAPIs();
+    console.log('Finished fetching dynamic data from APIs');
 
     function calcSum(item) {
       return (
@@ -609,13 +749,11 @@ async function fetchData() {
       );
     }
 
-    mockData.sort((a, b) => {
+    data.sort((a, b) => {
       const somaA = calcSum(a);
       const somaB = calcSum(b);
       return somaB - somaA;
     });
-
-    const data = mockData;
 
     // Calculate total summary
     const totalSummary = data.reduce((acc, item) => {
@@ -631,8 +769,8 @@ async function fetchData() {
    
     //totalSummaryElement.textContent = `Total: Agentes: ${formatNumber(totalSummary.agents)}, Espaços: ${totalSummary.spaces}, Eventos: ${totalSummary.events}, Projetos: ${totalSummary.projects}, Oportunidades: ${totalSummary.opportunities}`;
     
-    // Simulate network delay
-    await new Promise(resolve => setTimeout(resolve, 1000));
+    // Small delay to show final loading message
+    await new Promise(resolve => setTimeout(resolve, 500));
     
     renderCards(data, totalSummary);
     hideLoading();
@@ -680,6 +818,38 @@ function createCard(data, index) {
   const cardVersion = document.createElement('p');
   cardVersion.textContent = `Versão: ${data.version} | Timezone: ${data.timezone}`;
   cardHeader.appendChild(cardVersion);
+  
+  // Add data source indicator
+  if (data.dataSource) {
+    const statusIndicator = document.createElement('div');
+    statusIndicator.className = 'data-status';
+    
+    let statusText = '';
+    let statusClass = '';
+    
+    switch (data.dataSource) {
+      case 'api':
+        statusText = `✓ Atualizado ${data.lastUpdated ? new Date(data.lastUpdated).toLocaleTimeString('pt-BR') : ''}`;
+        statusClass = 'status-updated';
+        break;
+      case 'fallback':
+        statusText = `🔄 Fallback - ${data.fallbackReason || 'Array inicial'}`;
+        statusClass = 'status-fallback';
+        break;
+      case 'cached':
+        statusText = '⚠ Dados em cache';
+        statusClass = 'status-cached';
+        break;
+      case 'static':
+        statusText = '📊 Dados estáticos';
+        statusClass = 'status-static';
+        break;
+    }
+    
+    statusIndicator.textContent = statusText;
+    statusIndicator.className += ' ' + statusClass;
+    cardHeader.appendChild(statusIndicator);
+  }
   
   // Create card body
   const cardBody = document.createElement('div');
